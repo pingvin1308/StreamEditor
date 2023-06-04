@@ -17,7 +17,7 @@ let page = doctypeHtml {
     }
     body {
         nav {
-            attr.``class`` "navbar is-dark"
+            attr.``class`` "navbar is-black"
             "role" => "navigation"
             attr.aria "label" "main navigation"
             div {
@@ -30,7 +30,12 @@ let page = doctypeHtml {
                 }
             }
         }
-        div { attr.id "main"; comp<Client.Main.MyApp> }
+        div {
+            attr.``class`` "dark-theme"
+            attr.id "main"
+            comp<Client.Main.MyApp>
+        }
         boleroScript
+        script { attr.src "focus.js" }
     }
 }

@@ -1,221 +1,383 @@
 module StreamEditor.UI.Client.Main
 
 open System
+open System.Threading.Tasks
 open Elmish
 open Bolero
 open Bolero.Html
-open Bolero.Remoting
 open Bolero.Remoting.Client
 open Bolero.Templating.Client
+open Microsoft.JSInterop
 
 /// Routing endpoints definition.
-type Page =
-    | [<EndPoint "/">] Home
-    | [<EndPoint "/counter">] Counter
-    | [<EndPoint "/data">] Data
+type Page = | [<EndPoint "/">] Editor
 
 /// The Elmish application's model.
 type Model =
-    {
-        page: Page
-        counter: int
-        books: Book[] option
-        error: string option
-        username: string
-        password: string
-        signedInAs: option<string>
-        signInFailed: bool
-    }
-
-and Book =
-    {
-        title: string
-        author: string
-        publishDate: DateTime
-        isbn: string
-    }
+    { page: Page
+      error: string option
+      code: string
+      isTyping: bool
+      formattedCode: Node[]
+      textWidthToCursor: float
+      topCursorPosition: int
+      leftCursorPosition: int }
 
 let initModel =
-    {
-        page = Home
-        counter = 0
-        books = None
-        error = None
-        username = ""
-        password = ""
-        signedInAs = None
-        signInFailed = false
-    }
+    { page = Editor
+      error = None
+      code = ""
+      isTyping = false
+      formattedCode = [||]
+      textWidthToCursor = 0
+      topCursorPosition = 0
+      leftCursorPosition = 0 }
 
-/// Remote service definition.
-type BookService =
-    {
-        /// Get the list of all books in the collection.
-        getBooks: unit -> Async<Book[]>
+type ArrowKey =
+    | ArrowDown
+    | ArrowUp
+    | ArrowLeft
+    | ArrowRight
 
-        /// Add a book in the collection.
-        addBook: Book -> Async<unit>
+type SpecialKey =
+    | Arrows of ArrowKey
+    | Enter
+    | Backspace
+    | Symbol
 
-        /// Remove a book from the collection, identified by its ISBN.
-        removeBookByIsbn: string -> Async<unit>
+let parseArrowKey =
+    function
+    | "ArrowDown" -> Some ArrowDown
+    | "ArrowUp" -> Some ArrowUp
+    | "ArrowLeft" -> Some ArrowLeft
+    | "ArrowRight" -> Some ArrowRight
+    | _ -> None
 
-        /// Sign into the application.
-        signIn : string * string -> Async<option<string>>
+let parseSpecialKey key =
+    let specialKey =
+        match key with
+        | "Enter" -> Some Enter
+        | "Backspace" -> Some Backspace
+        | "Alt"
+        | "Control"
+        | "Shift" -> None
+        | _ ->
+            match parseArrowKey key with
+            | Some arrows -> Some(Arrows arrows)
+            | None -> Some Symbol
 
-        /// Get the user's name, or None if they are not authenticated.
-        getUsername : unit -> Async<string>
+    specialKey
 
-        /// Sign out from the application.
-        signOut : unit -> Async<unit>
-    }
-
-    interface IRemoteService with
-        member this.BasePath = "/books"
-
-/// The Elmish application's update messages.
 type Message =
     | SetPage of Page
-    | Increment
-    | Decrement
-    | SetCounter of int
-    | GetBooks
-    | GotBooks of Book[]
-    | SetUsername of string
-    | SetPassword of string
-    | GetSignedInAs
-    | RecvSignedInAs of option<string>
-    | SendSignIn
-    | RecvSignIn of option<string>
-    | SendSignOut
-    | RecvSignOut
+    | OnCodeEdit of string
+    | OnCaretMove of ArrowKey
+    | OnRemove
+    | OnInsert of string
+    | OnSetCursor of int * int
     | Error of exn
     | ClearError
 
-let update remote message model =
-    let onSignIn = function
-        | Some _ -> Cmd.ofMsg GetBooks
-        | None -> Cmd.none
+let calcCursorIndex model =
+    if model.code.Length = 0 then
+        0
+    else
+        let lines = model.code.Split "\n"
+
+        let previousLines =
+            if lines.Length > 0 then
+                lines[.. (model.topCursorPosition - 1)]
+            else
+                [||]
+
+        let symbolsInPreviousLines =
+            previousLines |> Array.map (fun x -> x.Length) |> Array.sum
+
+        let index =
+            symbolsInPreviousLines + model.topCursorPosition + model.leftCursorPosition
+
+        index
+
+
+let getWidth (js: IJSRuntime) (text: string) =
+    task {
+        let! width = js.InvokeAsync<int>("FocusJS.getTextWidth", text)
+        return width
+    }
+
+let getLeftCursorPositionByXY (js: IJSRuntime) (code: string) (x: double) =
+
+    let rec getLeftCursorPositionByXYIter left right (currentX: double) =
+        task {
+            if right - left > 0 then
+                let middle = left + (right - left) / 2
+                let leftCode = code[left..middle]
+                let! leftWidth = getWidth js leftCode
+
+                let! result =
+                    if leftWidth < int currentX then
+                        getLeftCursorPositionByXYIter (middle + 1) right (currentX - (double leftWidth))
+                    else
+                        getLeftCursorPositionByXYIter left middle currentX
+
+                return result
+            else
+                return left
+        }
+
+    getLeftCursorPositionByXYIter 0 (code.Length - 1) x
+
+
+let update (js: IJSRuntime) message model =
+
     match message with
-    | SetPage page ->
-        { model with page = page }, Cmd.none
+    | SetPage page -> { model with page = page }, Cmd.none
+    | OnCodeEdit code ->
+        let lines = code.Split "\n"
 
-    | Increment ->
-        { model with counter = model.counter + 1 }, Cmd.none
-    | Decrement ->
-        { model with counter = model.counter - 1 }, Cmd.none
-    | SetCounter value ->
-        { model with counter = value }, Cmd.none
+        let nodes =
+            lines
+            |> Array.mapi (fun i line ->
+                line.Split " "
+                |> Array.map (fun word ->
+                    span {
+                        on.mouseup (fun (args) ->
+                            printfn "start select"
+                            ())
 
-    | GetBooks ->
-        let cmd = Cmd.OfAsync.either remote.getBooks () GotBooks Error
-        { model with books = None }, cmd
-    | GotBooks books ->
-        { model with books = Some books }, Cmd.none
+                        word
+                        " "
+                    }))
+            |> Array.mapi (fun i line ->
+                span {
+                    for word in line do
+                        word
 
-    | SetUsername s ->
-        { model with username = s }, Cmd.none
-    | SetPassword s ->
-        { model with password = s }, Cmd.none
-    | GetSignedInAs ->
-        model, Cmd.OfAuthorized.either remote.getUsername () RecvSignedInAs Error
-    | RecvSignedInAs username ->
-        { model with signedInAs = username }, onSignIn username
-    | SendSignIn ->
-        model, Cmd.OfAsync.either remote.signIn (model.username, model.password) RecvSignIn Error
-    | RecvSignIn username ->
-        { model with signedInAs = username; signInFailed = Option.isNone username }, onSignIn username
-    | SendSignOut ->
-        model, Cmd.OfAsync.either remote.signOut () (fun () -> RecvSignOut) Error
-    | RecvSignOut ->
-        { model with signedInAs = None; signInFailed = false }, Cmd.none
+                    "\n"
+                })
 
-    | Error RemoteUnauthorizedException ->
-        { model with error = Some "You have been logged out."; signedInAs = None }, Cmd.none
-    | Error exn ->
-        { model with error = Some exn.Message }, Cmd.none
-    | ClearError ->
-        { model with error = None }, Cmd.none
+        let isAppend = model.code.Length < code.Length
+
+        let maxColumnPosition topCursorPosition = lines[topCursorPosition].Length
+
+        let (top, left, cmd) =
+            match (isAppend, lines.Length) with
+            | (isAppend, linesCount) when (isAppend) && linesCount > (model.code.Split "\n").Length ->
+                let top = model.topCursorPosition + 1
+
+                top, 0, Cmd.none
+            | (isAppend, linesCount) when (not isAppend) && linesCount < (model.code.Split "\n").Length ->
+                let top = model.topCursorPosition - 1
+                top, maxColumnPosition top, Cmd.none
+
+            | (isAppend, linesCount) when isAppend && linesCount = (model.code.Split "\n").Length ->
+                model.topCursorPosition, model.leftCursorPosition + 1, Cmd.none
+            | (isAppend, linesCount) when not isAppend && linesCount = (model.code.Split "\n").Length ->
+                model.topCursorPosition, model.leftCursorPosition - 1, Cmd.none
+            | _ -> failwith "todo"
+
+        { model with
+            topCursorPosition = top
+            leftCursorPosition = left
+            formattedCode = nodes
+            code = code },
+        cmd
+    | OnCaretMove arrowKey ->
+        if model.code.Length > 0 then
+            let lines = model.code.Split "\n"
+            let maxLinePosition = lines.Length - 1
+            let maxColumnPosition topCursorPosition = lines[topCursorPosition].Length
+
+            let top, left =
+                match arrowKey with
+                | ArrowDown ->
+                    let top = Math.Min(model.topCursorPosition + 1, maxLinePosition)
+                    let left = Math.Min(model.leftCursorPosition, maxColumnPosition top)
+                    top, left
+                | ArrowUp ->
+                    let top = Math.Max(model.topCursorPosition - 1, 0)
+                    let left = Math.Min(model.leftCursorPosition, maxColumnPosition top)
+                    top, left
+                | ArrowLeft ->
+                    let top = model.topCursorPosition
+                    let left = Math.Max(model.leftCursorPosition - 1, 0)
+                    top, left
+                | ArrowRight ->
+                    let top = model.topCursorPosition
+
+                    let left =
+                        Math.Min(model.leftCursorPosition + 1, maxColumnPosition model.topCursorPosition)
+
+                    top, left
+
+            { model with
+                topCursorPosition = top
+                leftCursorPosition = left },
+            Cmd.none
+        else
+            model, Cmd.none
+
+    | OnInsert symbol ->
+        let code =
+            if symbol <> "" then
+                let index = calcCursorIndex model
+                model.code.Insert(index, symbol)
+            else
+                model.code
+
+        model, Cmd.ofMsg (OnCodeEdit code)
+
+    | OnSetCursor (top, left) ->
+        { model with
+            topCursorPosition = top
+            leftCursorPosition = left },
+        Cmd.none
+
+    | OnRemove ->
+        if model.code.Length > 0 then
+            let index = calcCursorIndex model
+
+            let code =
+                if model.code.Length - 1 > index then
+                    model.code.Remove(index - 1, 1)
+                else
+                    model.code.Remove(model.code.Length - 1)
+
+            model, Cmd.ofMsg (OnCodeEdit code)
+        else
+            model, Cmd.none
+
+    | Error exn -> { model with error = Some exn.Message }, Cmd.none
+    | ClearError -> { model with error = None }, Cmd.none
 
 /// Connects the routing system to the Elmish application.
 let router = Router.infer SetPage (fun model -> model.page)
 
 type Main = Template<"wwwroot/main.html">
 
-let homePage model dispatch =
-    Main.Home().Elt()
+let mutable blink = true
 
-let counterPage model dispatch =
-    Main.Counter()
-        .Decrement(fun _ -> dispatch Decrement)
-        .Increment(fun _ -> dispatch Increment)
-        .Value(model.counter, fun v -> dispatch (SetCounter v))
-        .Elt()
+let hiddenTextArea (js: IJSRuntime) model dispatch =
+    div {
+        attr.id "container"
+        attr.tabindex "0"
 
-let dataPage model (username: string) dispatch =
-    Main.Data()
-        .Reload(fun _ -> dispatch GetBooks)
-        .Username(username)
-        .SignOut(fun _ -> dispatch SendSignOut)
-        .Rows(cond model.books <| function
-            | None ->
-                Main.EmptyData().Elt()
-            | Some books ->
-                forEach books <| fun book ->
-                    tr {
-                        td { book.title }
-                        td { book.author }
-                        td { book.publishDate.ToString("yyyy-MM-dd") }
-                        td { book.isbn }
-                    })
-        .Elt()
+        on.async.keydown (fun args ->
+            async {
+                blink <- false
 
-let signInPage model dispatch =
-    Main.SignIn()
-        .Username(model.username, fun s -> dispatch (SetUsername s))
-        .Password(model.password, fun s -> dispatch (SetPassword s))
-        .SignIn(fun _ -> dispatch SendSignIn)
-        .ErrorNotification(
-            cond model.signInFailed <| function
-            | false -> empty()
-            | true ->
-                Main.ErrorNotification()
-                    .HideClass("is-hidden")
-                    .Text("Sign in failed. Use any username and the password \"password\".")
-                    .Elt()
+                match (parseSpecialKey args.Key) with
+                | Some specialKey ->
+                    match specialKey with
+                    | Arrows arrows -> dispatch (OnCaretMove arrows)
+                    | Enter -> dispatch (OnInsert "\n")
+                    | Backspace -> dispatch OnRemove
+                    | Symbol -> dispatch (OnInsert args.Key)
+                | None -> ()
+
+                do! Task.Delay 1000 |> Async.AwaitTask
+                blink <- true
+            })
+
+        on.async.keyup (fun _ ->
+            async {
+                do! Task.Delay 1000 |> Async.AwaitTask
+                blink <- true
+            })
+
+        div {
+            attr.id "display"
+            attr.style "white-space: pre; display:flex;"
+
+            div {
+                attr.style
+                    "white-space: pre;
+                    display:flex;
+                    flex-direction: column;
+                    text-align:end;
+                    width: 50px;
+                    border-right: #363636;
+                    border-style: none solid none none;
+                    margin-right: 5px;"
+
+                let getLineNumberElement num = span { string (num + 1) + ": " }
+
+                let lineNumbersElements =
+                    model.formattedCode |> Array.mapi (fun i _ -> getLineNumberElement i)
+
+                if lineNumbersElements.Length = 0 then
+                    getLineNumberElement 0
+                else
+                    for lineElement in lineNumbersElements do
+                        lineElement
+            }
+
+            div {
+                attr.style "position:relative"
+
+
+                let lines =
+                    model.formattedCode
+                    |> Array.mapi (fun i line -> 
+                        pre {
+                            on.task.click (fun (args) ->
+                                task {
+                                    printfn "Line:%A Offset= %A:%A" i args.OffsetX args.OffsetY
+                                    let currentLine = (model.code.Split "\n")[i]
+                                    let! leftPosition = getLeftCursorPositionByXY js currentLine args.OffsetX
+                                    dispatch (OnSetCursor (i, leftPosition))
+                                })
+
+                            line
+                        })
+                    
+                for line in lines do
+                    line
+
+                div {
+                    attr.id "cursor"
+
+                    attr.style (
+                        sprintf
+                            "top:%dem; left:%dch; animation:%s;"
+                            (model.topCursorPosition)
+                            (model.leftCursorPosition)
+                            (if blink then
+                                 "cursor-blink 1.5s steps(2) infinite"
+                             else
+                                 "pause")
+                    )
+                }
+            }
+        }
+    }
+
+let streamEditorPage (js: IJSRuntime) model dispatch =
+    Main
+        .StreamEditor()
+        .Body(
+            div {
+                h1 { "Stream editor" }
+                span { "top:" + (string model.topCursorPosition) }
+                span { "left:" + (string model.leftCursorPosition) }
+                hr
+                hiddenTextArea js model dispatch
+            }
         )
         .Elt()
 
-let menuItem (model: Model) (page: Page) (text: string) =
-    Main.MenuItem()
-        .Active(if model.page = page then "is-active" else "")
-        .Url(router.Link page)
-        .Text(text)
-        .Elt()
-
-let view model dispatch =
+let view (js: IJSRuntime) model dispatch =
     Main()
-        .Menu(concat {
-            menuItem model Home "Home"
-            menuItem model Counter "Counter"
-            menuItem model Data "Download data"
-        })
         .Body(
-            cond model.page <| function
-            | Home -> homePage model dispatch
-            | Counter -> counterPage model dispatch
-            | Data ->
-                cond model.signedInAs <| function
-                | Some username -> dataPage model username dispatch
-                | None -> signInPage model dispatch
+            cond model.page
+            <| function
+                | Editor -> streamEditorPage js model dispatch
         )
         .Error(
-            cond model.error <| function
-            | None -> empty()
-            | Some err ->
-                Main.ErrorNotification()
-                    .Text(err)
-                    .Hide(fun _ -> dispatch ClearError)
-                    .Elt()
+            cond model.error
+            <| function
+                | None -> empty ()
+                | Some err -> Main.ErrorNotification().Text(err).Hide(fun _ -> dispatch ClearError).Elt()
         )
         .Elt()
 
@@ -223,9 +385,10 @@ type MyApp() =
     inherit ProgramComponent<Model, Message>()
 
     override this.Program =
-        let bookService = this.Remote<BookService>()
-        let update = update bookService
-        Program.mkProgram (fun _ -> initModel, Cmd.ofMsg GetSignedInAs) update view
+        let update = update this.JSRuntime
+        let view = view this.JSRuntime
+
+        Program.mkProgram (fun _ -> initModel, Cmd.none) update view
         |> Program.withRouter router
 #if DEBUG
         |> Program.withHotReload

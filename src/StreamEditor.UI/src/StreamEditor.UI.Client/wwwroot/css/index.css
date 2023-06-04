@@ -1,40 +1,111 @@
 html, body {
-  height: 100%;
+    height: 100%;
+    line-height: 1;
+    font-family: monospace;
 }
 
 body {
-  display: flex;
-  flex-direction: column;
+    display: flex;
+    flex-direction: column;
 }
 
 #main {
-  flex: 1;
+    flex: 1;
 }
 
 #main > .columns {
-  min-height: 100%;
+    min-height: 100%;
 }
 
 .sidebar {
-  width: 250px;
-  background: whitesmoke;
-  min-height: 100%;
+    width: 250px;
+    background: whitesmoke;
+    min-height: 100%;
 }
 
 #counter {
-  width: 80px;
+    width: 80px;
 }
 
 #notification-area {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
 }
 
 #notification-area > div {
-  max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
-  margin-bottom: 5px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 5px;
+}
+
+aside.dark-theme {
+    background-color: #363636;
+    color: #fff;
+}
+
+.dark-theme {
+    background-color: #1e1e1e;
+    color: #fff;
+}
+
+#editor {
+    bottom: -1em;
+    padding: 0;
+    width: 1000px;
+    height: 1em;
+    outline: none;
+}
+
+#container {
+    font-family: monospace;
+    position: relative;
+    height: 100px;
+    cursor: text;
+    outline: none;
+}
+
+#container pre {
+    background: none;
+    color: inherit;
+    padding: 0 0;
+    word-wrap: normal;
+}
+
+pre {
+    display: contents;
+    margin: 0 0;
+    font-size: 1em;
+}
+
+#cursor {
+    position: absolute;
+    background: white;
+    content: "";
+    height: 1.1em;
+    width: 2px;
+    animation: cursor-blink 1.5s steps(2) infinite;
+
+}
+
+#cursor:active {
+    animation: paused;
+}
+
+#cursor::after {
+    position: absolute;
+    background: white;
+    content: "";
+    height: 1.1em;
+    width: 2px;
+    animation: cursor-blink 1.5s steps(2) infinite;
+}
+
+
+@keyframes cursor-blink {
+    0% {
+        opacity: 0;
+    }
 }
