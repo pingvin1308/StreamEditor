@@ -1,44 +1,14 @@
 html, body {
-    height: 100%;
     line-height: 1;
     font-family: monospace;
-}
 
-body {
-    display: flex;
-    flex-direction: column;
+    -webkit-user-select: none; /* Safari */
+    -ms-user-select: none; /* IE 10 and IE 11 */
+    user-select: none; /* Standard syntax */
 }
 
 #main {
     flex: 1;
-}
-
-#main > .columns {
-    min-height: 100%;
-}
-
-.sidebar {
-    width: 250px;
-    background: whitesmoke;
-    min-height: 100%;
-}
-
-#counter {
-    width: 80px;
-}
-
-#notification-area {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-}
-
-#notification-area > div {
-    max-width: 600px;
-    margin-left: auto;
-    margin-right: auto;
-    margin-bottom: 5px;
 }
 
 aside.dark-theme {
@@ -62,9 +32,9 @@ aside.dark-theme {
 #container {
     font-family: monospace;
     position: relative;
-    height: 100px;
     cursor: text;
     outline: none;
+    min-height: 100vh;
 }
 
 #container pre {
@@ -72,6 +42,10 @@ aside.dark-theme {
     color: inherit;
     padding: 0 0;
     word-wrap: normal;
+
+    -webkit-user-select: text; /* Safari */
+    -ms-user-select: text; /* IE 10 and IE 11 */
+    user-select: text; /* Standard syntax */
 }
 
 pre {

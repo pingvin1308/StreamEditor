@@ -11,8 +11,8 @@
     <ProjectReference Include="..\StreamEditor.UI.Client\StreamEditor.UI.Client.fsproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Bolero.Server" Version="0.*" />
-    <PackageReference Include="Bolero.HotReload.Server" Version="0.*" />
+    <PackageReference Include="Bolero.Server" Version="0.22.45" />
+    <PackageReference Include="Bolero.HotReload.Server" Version="0.22.6" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="7.0.*" />
   </ItemGroup>
 </Project>

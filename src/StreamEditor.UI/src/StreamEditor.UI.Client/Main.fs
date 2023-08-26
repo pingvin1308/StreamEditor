@@ -21,7 +21,9 @@ type Model =
       formattedCode: Node[]
       textWidthToCursor: float
       topCursorPosition: int
-      leftCursorPosition: int }
+      leftCursorPosition: int
+      topSelectPosition: int
+      leftSelectPosition: int }
 
 let initModel =
     { page = Editor
@@ -31,7 +33,9 @@ let initModel =
       formattedCode = [||]
       textWidthToCursor = 0
       topCursorPosition = 0
-      leftCursorPosition = 0 }
+      leftCursorPosition = 0
+      topSelectPosition = 0
+      leftSelectPosition = 0 }
 
 type ArrowKey =
     | ArrowDown
@@ -72,6 +76,7 @@ type Message =
     | SetPage of Page
     | OnCodeEdit of string
     | OnCaretMove of ArrowKey
+    | OnSelect of ArrowKey
     | OnRemove
     | OnInsert of string
     | OnSetCursor of int * int
@@ -98,13 +103,6 @@ let calcCursorIndex model =
 
         index
 
-
-let getWidth (js: IJSRuntime) (text: string) =
-    task {
-        let! width = js.InvokeAsync<int>("FocusJS.getTextWidth", text)
-        return width
-    }
-
 let getLeftCursorPositionByXY (js: IJSRuntime) (code: string) (x: double) =
 
     let rec getLeftCursorPositionByXYIter left right (currentX: double) =
@@ -112,7 +110,7 @@ let getLeftCursorPositionByXY (js: IJSRuntime) (code: string) (x: double) =
             if right - left > 0 then
                 let middle = left + (right - left) / 2
                 let leftCode = code[left..middle]
-                let! leftWidth = getWidth js leftCode
+                let! leftWidth = FocusJS.getWidth js leftCode
 
                 let! result =
                     if leftWidth < int currentX then
@@ -217,6 +215,13 @@ let update (js: IJSRuntime) message model =
         else
             model, Cmd.none
 
+    | OnSelect arrowKey ->
+        // start selection of characters from current position
+        
+        
+        { model with
+            topSelectPosition = 1
+            leftSelectPosition = 4 }, Cmd.ofMsg (OnCaretMove arrowKey)    
     | OnInsert symbol ->
         let code =
             if symbol <> "" then
@@ -264,26 +269,27 @@ let hiddenTextArea (js: IJSRuntime) model dispatch =
 
         on.async.keydown (fun args ->
             async {
-                blink <- false
-
+                // blink <- false
+                
                 match (parseSpecialKey args.Key) with
                 | Some specialKey ->
                     match specialKey with
+                    | Arrows arrows when args.ShiftKey -> dispatch (OnSelect arrows)
                     | Arrows arrows -> dispatch (OnCaretMove arrows)
                     | Enter -> dispatch (OnInsert "\n")
                     | Backspace -> dispatch OnRemove
                     | Symbol -> dispatch (OnInsert args.Key)
                 | None -> ()
 
-                do! Task.Delay 1000 |> Async.AwaitTask
-                blink <- true
+                // do! Task.Delay 1000 |> Async.AwaitTask
+                // blink <- true
             })
 
-        on.async.keyup (fun _ ->
-            async {
-                do! Task.Delay 1000 |> Async.AwaitTask
-                blink <- true
-            })
+        // on.async.keyup (fun _ ->
+        //     async {
+        //         do! Task.Delay 1000 |> Async.AwaitTask
+        //         blink <- true
+        //     })
 
         div {
             attr.id "display"
@@ -353,31 +359,20 @@ let hiddenTextArea (js: IJSRuntime) model dispatch =
     }
 
 let streamEditorPage (js: IJSRuntime) model dispatch =
-    Main
-        .StreamEditor()
-        .Body(
-            div {
-                h1 { "Stream editor" }
-                span { "top:" + (string model.topCursorPosition) }
-                span { "left:" + (string model.leftCursorPosition) }
-                hr
-                hiddenTextArea js model dispatch
-            }
-        )
-        .Elt()
-
+    div {
+        h1 { "Stream editor" }
+        span { "top:" + (string model.topCursorPosition) }
+        span { "left:" + (string model.leftCursorPosition) }
+        hr
+        hiddenTextArea js model dispatch
+    }
+        
 let view (js: IJSRuntime) model dispatch =
     Main()
         .Body(
             cond model.page
             <| function
                 | Editor -> streamEditorPage js model dispatch
-        )
-        .Error(
-            cond model.error
-            <| function
-                | None -> empty ()
-                | Some err -> Main.ErrorNotification().Text(err).Hide(fun _ -> dispatch ClearError).Elt()
         )
         .Elt()
 
