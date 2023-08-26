@@ -1,7 +1,6 @@
 module StreamEditor.UI.Client.Main
 
 open System
-open System.Threading.Tasks
 open Elmish
 open Bolero
 open Bolero.Html
@@ -103,29 +102,6 @@ let calcCursorIndex model =
 
         index
 
-let getLeftCursorPositionByXY (js: IJSRuntime) (code: string) (x: double) =
-
-    let rec getLeftCursorPositionByXYIter left right (currentX: double) =
-        task {
-            if right - left > 0 then
-                let middle = left + (right - left) / 2
-                let leftCode = code[left..middle]
-                let! leftWidth = FocusJS.getWidth js leftCode
-
-                let! result =
-                    if leftWidth < int currentX then
-                        getLeftCursorPositionByXYIter (middle + 1) right (currentX - (double leftWidth))
-                    else
-                        getLeftCursorPositionByXYIter left middle currentX
-
-                return result
-            else
-                return left
-        }
-
-    getLeftCursorPositionByXYIter 0 (code.Length - 1) x
-
-
 let update (js: IJSRuntime) message model =
 
     match message with
@@ -160,18 +136,24 @@ let update (js: IJSRuntime) message model =
 
         let (top, left, cmd) =
             match (isAppend, lines.Length) with
-            | (isAppend, linesCount) when (isAppend) && linesCount > (model.code.Split "\n").Length ->
+            | (isAppend, linesCount) when isAppend && linesCount > (model.code.Split "\n").Length ->
                 let top = model.topCursorPosition + 1
+                let moveDown = (Cmd.OfTask.attempt (SelectionJS.moveLine js) SelectionJS.Forward)
+                top, 0, moveDown
 
-                top, 0, Cmd.none
             | (isAppend, linesCount) when (not isAppend) && linesCount < (model.code.Split "\n").Length ->
                 let top = model.topCursorPosition - 1
-                top, maxColumnPosition top, Cmd.none
+                let moveUp = (Cmd.OfTask.attempt (SelectionJS.moveLine js) SelectionJS.Backward)
+                top, maxColumnPosition top, moveUp
 
             | (isAppend, linesCount) when isAppend && linesCount = (model.code.Split "\n").Length ->
-                model.topCursorPosition, model.leftCursorPosition + 1, Cmd.none
+                let moveRight = (Cmd.OfTask.attempt (SelectionJS.moveCharacter js) SelectionJS.Forward)
+                model.topCursorPosition, model.leftCursorPosition + 1, moveRight
+
             | (isAppend, linesCount) when not isAppend && linesCount = (model.code.Split "\n").Length ->
-                model.topCursorPosition, model.leftCursorPosition - 1, Cmd.none
+                let moveLeft = (Cmd.OfTask.attempt (SelectionJS.moveCharacter js) SelectionJS.Backward)
+                model.topCursorPosition, model.leftCursorPosition - 1, moveLeft
+
             | _ -> failwith "todo"
 
         { model with
@@ -179,7 +161,8 @@ let update (js: IJSRuntime) message model =
             leftCursorPosition = left
             formattedCode = nodes
             code = code },
-        cmd
+        cmd Error
+
     | OnCaretMove arrowKey ->
         if model.code.Length > 0 then
             let lines = model.code.Split "\n"
@@ -217,11 +200,11 @@ let update (js: IJSRuntime) message model =
 
     | OnSelect arrowKey ->
         // start selection of characters from current position
-        
-        
+
         { model with
             topSelectPosition = 1
-            leftSelectPosition = 4 }, Cmd.ofMsg (OnCaretMove arrowKey)    
+            leftSelectPosition = 4 },
+        Cmd.ofMsg (OnCaretMove arrowKey)
     | OnInsert symbol ->
         let code =
             if symbol <> "" then
@@ -233,6 +216,7 @@ let update (js: IJSRuntime) message model =
         model, Cmd.ofMsg (OnCodeEdit code)
 
     | OnSetCursor (top, left) ->
+
         { model with
             topCursorPosition = top
             leftCursorPosition = left },
@@ -255,14 +239,13 @@ let update (js: IJSRuntime) message model =
     | Error exn -> { model with error = Some exn.Message }, Cmd.none
     | ClearError -> { model with error = None }, Cmd.none
 
-/// Connects the routing system to the Elmish application.
 let router = Router.infer SetPage (fun model -> model.page)
 
 type Main = Template<"wwwroot/main.html">
 
 let mutable blink = true
 
-let hiddenTextArea (js: IJSRuntime) model dispatch =
+let viewEditor (js: IJSRuntime) model dispatch =
     div {
         attr.id "container"
         attr.tabindex "0"
@@ -270,7 +253,7 @@ let hiddenTextArea (js: IJSRuntime) model dispatch =
         on.async.keydown (fun args ->
             async {
                 // blink <- false
-                
+
                 match (parseSpecialKey args.Key) with
                 | Some specialKey ->
                     match specialKey with
@@ -281,8 +264,8 @@ let hiddenTextArea (js: IJSRuntime) model dispatch =
                     | Symbol -> dispatch (OnInsert args.Key)
                 | None -> ()
 
-                // do! Task.Delay 1000 |> Async.AwaitTask
-                // blink <- true
+            // do! Task.Delay 1000 |> Async.AwaitTask
+            // blink <- true
             })
 
         // on.async.keyup (fun _ ->
@@ -324,19 +307,17 @@ let hiddenTextArea (js: IJSRuntime) model dispatch =
 
                 let lines =
                     model.formattedCode
-                    |> Array.mapi (fun i line -> 
+                    |> Array.mapi (fun i line ->
                         pre {
                             on.task.click (fun (args) ->
                                 task {
-                                    printfn "Line:%A Offset= %A:%A" i args.OffsetX args.OffsetY
-                                    let currentLine = (model.code.Split "\n")[i]
-                                    let! leftPosition = getLeftCursorPositionByXY js currentLine args.OffsetX
-                                    dispatch (OnSetCursor (i, leftPosition))
+                                    let! leftPosition = SelectionJS.getCurrentPosition js
+                                    dispatch (OnSetCursor(i, leftPosition))
                                 })
 
                             line
                         })
-                    
+
                 for line in lines do
                     line
 
@@ -358,21 +339,21 @@ let hiddenTextArea (js: IJSRuntime) model dispatch =
         }
     }
 
-let streamEditorPage (js: IJSRuntime) model dispatch =
+let viewStreamEditorPage (js: IJSRuntime) model dispatch =
     div {
         h1 { "Stream editor" }
         span { "top:" + (string model.topCursorPosition) }
         span { "left:" + (string model.leftCursorPosition) }
         hr
-        hiddenTextArea js model dispatch
+        viewEditor js model dispatch
     }
-        
+
 let view (js: IJSRuntime) model dispatch =
     Main()
         .Body(
             cond model.page
             <| function
-                | Editor -> streamEditorPage js model dispatch
+                | Editor -> viewStreamEditorPage js model dispatch
         )
         .Elt()
 

@@ -6,6 +6,7 @@
   <ItemGroup>
     <Compile Include="FocusJS.fs" />
     <Compile Include="SelectionJS.fs" />
+    <Compile Include="Editor.fs" />
     <Compile Include="Main.fs" />
     <Compile Include="Startup.fs" />
   </ItemGroup>

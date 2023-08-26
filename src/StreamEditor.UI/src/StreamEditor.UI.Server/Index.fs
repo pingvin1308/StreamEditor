@@ -60,5 +60,6 @@ let page =
 
             boleroScript
             script { attr.src "focus.js" }
+            script { attr.src "selection.js" }
         }
     }
